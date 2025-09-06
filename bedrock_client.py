@@ -44,15 +44,18 @@ class BedrockClient:
                 if credentials:
                     logger.info(f"Using credentials method: {credentials.method}")
                     
-                    # Create client with the session
-                    client = session.client('bedrock-runtime', region_name=region)
+                    # Test credentials with bedrock client first
+                    test_client = session.client('bedrock', region_name=region)
                     
-                    # Test the client with a simple call
                     try:
-                        models = client.list_foundation_models()
+                        models = test_client.list_foundation_models()
                         logger.info(f"Successfully authenticated with Bedrock using {credentials.method}")
                         logger.info(f"Available models: {len(models.get('modelSummaries', []))}")
-                        return client
+                        
+                        # Create the runtime client for actual model invocation
+                        runtime_client = session.client('bedrock-runtime', region_name=region)
+                        return runtime_client
+                        
                     except ClientError as e:
                         if "UnrecognizedClientException" in str(e):
                             logger.warning("Instance role credentials are invalid")
@@ -69,24 +72,32 @@ class BedrockClient:
             if aws_profile and aws_profile != 'default':
                 logger.info(f"Trying with AWS profile: {aws_profile}")
                 session = boto3.Session(profile_name=aws_profile)
-                client = session.client('bedrock-runtime', region_name=region)
                 
+                # Test with bedrock client
+                test_client = session.client('bedrock', region_name=region)
                 try:
-                    models = client.list_foundation_models()
+                    models = test_client.list_foundation_models()
                     logger.info(f"Successfully authenticated with profile: {aws_profile}")
-                    return client
+                    
+                    # Return runtime client
+                    runtime_client = session.client('bedrock-runtime', region_name=region)
+                    return runtime_client
                 except ClientError as e:
                     logger.warning(f"Profile authentication failed: {e}")
             
             # Final fallback: default client (will use environment variables if available)
             logger.info("Using default boto3 client configuration")
-            client = boto3.client('bedrock-runtime', region_name=region)
+            session = boto3.Session()
             
-            # Test the client
+            # Test with bedrock client
+            test_client = session.client('bedrock', region_name=region)
             try:
-                models = client.list_foundation_models()
+                models = test_client.list_foundation_models()
                 logger.info("Successfully authenticated with default configuration")
-                return client
+                
+                # Return runtime client
+                runtime_client = session.client('bedrock-runtime', region_name=region)
+                return runtime_client
             except ClientError as e:
                 logger.error(f"All authentication methods failed: {e}")
                 raise Exception(f"Unable to authenticate with AWS Bedrock: {e}")
