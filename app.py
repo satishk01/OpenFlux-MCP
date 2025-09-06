@@ -18,6 +18,16 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Force reload modules to avoid caching issues
+import importlib
+import sys
+
+# Clear any cached modules
+modules_to_reload = ['mcp_sync_client', 'mcp_client']
+for module_name in modules_to_reload:
+    if module_name in sys.modules:
+        importlib.reload(sys.modules[module_name])
+
 # Import MCP components
 from mcp_sync_client import MCPSyncClient
 from bedrock_client import BedrockClient
@@ -227,10 +237,19 @@ class OpenFluxApp:
                 
                 st.markdown(f'<span class="status-indicator status-connected"></span>AWS Region: {aws_region}', unsafe_allow_html=True)
                 
-                if st.button("🔄 Reload Environment"):
-                    load_dotenv(override=True)
-                    st.success("Environment reloaded!")
-                    st.rerun()
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Reload Env"):
+                        load_dotenv(override=True)
+                        st.success("Environment reloaded!")
+                        st.rerun()
+                with col2:
+                    if st.button("🔄 Force Restart"):
+                        # Clear session state and force restart
+                        for key in list(st.session_state.keys()):
+                            del st.session_state[key]
+                        st.success("App restarted!")
+                        st.rerun()
                 
                 st.markdown('</div>', unsafe_allow_html=True)
             
@@ -251,6 +270,7 @@ class OpenFluxApp:
                         pass
                 
                 self.mcp_client = MCPSyncClient()
+                logger.info(f"Created MCP client: {type(self.mcp_client)}")
                 self.mcp_client.connect()
                 st.session_state.mcp_connected = True
                 st.success("MCP server connected successfully!")
@@ -283,6 +303,8 @@ class OpenFluxApp:
                     self.connect_mcp_server()
                 
                 if self.mcp_client:
+                    logger.info(f"Using MCP client type: {type(self.mcp_client)}")
+                    logger.info(f"MCP client methods: {[m for m in dir(self.mcp_client) if not m.startswith('_')]}")
                     result = self.mcp_client.index_repository(st.session_state.github_repo)
                     st.success(f"Repository {st.session_state.github_repo} indexed successfully!")
                     logger.info(f"Index result: {result}")
