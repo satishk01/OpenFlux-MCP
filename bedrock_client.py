@@ -204,7 +204,7 @@ If no context is provided, respond as a helpful coding assistant."""
         
         body = {
             "messages": messages,
-            "max_tokens": 4000,
+            "maxTokens": 4000,
             "temperature": 0.7
         }
         
