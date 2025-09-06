@@ -19,9 +19,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Import MCP components
-from mcp_client import MCPClient
+from mcp_sync_client import MCPSyncClient
 from bedrock_client import BedrockClient
-from async_handler import run_async
 
 # Page configuration
 st.set_page_config(
@@ -247,12 +246,12 @@ class OpenFluxApp:
                 # Disconnect existing client if any
                 if self.mcp_client:
                     try:
-                        run_async(self.mcp_client.disconnect())
+                        self.mcp_client.disconnect()
                     except:
                         pass
                 
-                self.mcp_client = MCPClient()
-                run_async(self.mcp_client.connect())
+                self.mcp_client = MCPSyncClient()
+                self.mcp_client.connect()
                 st.session_state.mcp_connected = True
                 st.success("MCP server connected successfully!")
         except Exception as e:
@@ -265,7 +264,7 @@ class OpenFluxApp:
         try:
             if self.mcp_client:
                 with st.spinner("Disconnecting from MCP server..."):
-                    run_async(self.mcp_client.disconnect())
+                    self.mcp_client.disconnect()
                     self.mcp_client = None
                     st.session_state.mcp_connected = False
                     st.success("MCP server disconnected successfully!")
@@ -284,12 +283,14 @@ class OpenFluxApp:
                     self.connect_mcp_server()
                 
                 if self.mcp_client:
-                    result = run_async(self.mcp_client.index_repository(st.session_state.github_repo))
+                    result = self.mcp_client.index_repository(st.session_state.github_repo)
                     st.success(f"Repository {st.session_state.github_repo} indexed successfully!")
+                    logger.info(f"Index result: {result}")
                 else:
                     st.error("MCP client not connected")
         except Exception as e:
             st.error(f"Failed to index repository: {str(e)}")
+            logger.error(f"Index error: {e}", exc_info=True)
             
     def render_chat_interface(self):
         """Render the main chat interface"""
@@ -359,11 +360,9 @@ class OpenFluxApp:
         try:
             with st.spinner("Searching repository..."):
                 # Perform semantic search using MCP
-                search_results = run_async(
-                    self.mcp_client.semantic_search(
-                        repository=st.session_state.github_repo,
-                        query=query
-                    )
+                search_results = self.mcp_client.semantic_search(
+                    repository=st.session_state.github_repo,
+                    query=query
                 )
                 
                 # Add tool call message
