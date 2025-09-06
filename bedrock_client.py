@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class BedrockClient:
     """Client for interacting with AWS Bedrock models"""
     
-    def __init__(self, region: str = "us-west-2", model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"):
+    def __init__(self, region: str = "us-west-2", model_id: str = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"):
         self.region = region
         self.model_id = model_id
         self.client = self._create_bedrock_client(region)
