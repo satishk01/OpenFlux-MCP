@@ -6,6 +6,10 @@ import os
 import logging
 from typing import Dict, List, Any, Optional
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +34,22 @@ class MCPClient:
         """Connect to the MCP server"""
         try:
             # Validate environment
-            if not self.server_config["env"]["GITHUB_TOKEN"]:
-                raise Exception("GITHUB_TOKEN environment variable is required")
+            github_token = self.server_config["env"]["GITHUB_TOKEN"]
+            if not github_token:
+                raise Exception("GITHUB_TOKEN environment variable is required. Please set it in your .env file.")
+            
+            if github_token == "your-github-token":
+                raise Exception("Please replace 'your-github-token' with your actual GitHub token in the .env file")
                 
+            logger.info(f"Using GitHub token: {github_token[:8]}...")
+            logger.info(f"AWS Region: {self.server_config['env']['AWS_REGION']}")
+            logger.info(f"AWS Profile: {self.server_config['env']['AWS_PROFILE']}")
+            
             # Start the MCP server process
             env = os.environ.copy()
             env.update(self.server_config["env"])
+            
+            logger.info(f"Starting MCP server: {self.server_config['command']} {' '.join(self.server_config['args'])}")
             
             self.process = await asyncio.create_subprocess_exec(
                 self.server_config["command"],
@@ -45,6 +59,15 @@ class MCPClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
+            
+            # Wait a moment for the process to start
+            await asyncio.sleep(2)
+            
+            # Check if process is still running
+            if self.process.returncode is not None:
+                stderr_output = await self.process.stderr.read()
+                error_msg = stderr_output.decode() if stderr_output else "Unknown error"
+                raise Exception(f"MCP server process failed to start: {error_msg}")
             
             # Initialize MCP protocol
             await self._initialize_protocol()

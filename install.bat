@@ -68,6 +68,16 @@ if not exist .env (
     echo ✅ .env file already exists
 )
 
+REM Check environment
+echo 🔍 Checking environment configuration...
+python check_env.py
+if errorlevel 1 (
+    echo ⚠️ Environment configuration issues found
+    echo Please check the output above and fix any issues
+) else (
+    echo ✅ Environment properly configured!
+)
+
 REM Run tests
 echo 🧪 Running application tests...
 python test_app.py
