@@ -9,6 +9,10 @@ import subprocess
 import tempfile
 import logging
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -17,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Import MCP components
 from mcp_client import MCPClient
 from bedrock_client import BedrockClient
+from async_handler import run_async
 
 # Page configuration
 st.set_page_config(
@@ -108,6 +113,18 @@ class OpenFluxApp:
         self.bedrock_client = None
         self.initialize_session_state()
         
+    def cleanup(self):
+        """Cleanup resources"""
+        if self.mcp_client:
+            try:
+                # Use synchronous cleanup to avoid async issues
+                self.mcp_client.cleanup()
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}")
+            finally:
+                self.mcp_client = None
+                st.session_state.mcp_connected = False
+        
     def initialize_session_state(self):
         """Initialize session state variables"""
         if 'messages' not in st.session_state:
@@ -119,7 +136,7 @@ class OpenFluxApp:
         if 'github_repo' not in st.session_state:
             st.session_state.github_repo = ''
         if 'aws_region' not in st.session_state:
-            st.session_state.aws_region = 'us-west-2'
+            st.session_state.aws_region = os.getenv('AWS_REGION', 'us-west-2')
             
     def render_sidebar(self):
         """Render the sidebar with configuration options"""
@@ -141,8 +158,13 @@ class OpenFluxApp:
                 </div>
                 ''', unsafe_allow_html=True)
                 
-                if st.button("🔄 Reconnect MCP Server"):
-                    self.connect_mcp_server()
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Reconnect"):
+                        self.connect_mcp_server()
+                with col2:
+                    if st.button("🔌 Disconnect"):
+                        self.disconnect_mcp_server()
                     
                 st.markdown('</div>', unsafe_allow_html=True)
             
@@ -191,6 +213,28 @@ class OpenFluxApp:
                         
                 st.markdown('</div>', unsafe_allow_html=True)
             
+            # Environment Status
+            with st.container():
+                st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+                st.subheader("Environment Status")
+                
+                github_token = os.getenv('GITHUB_TOKEN')
+                aws_region = os.getenv('AWS_REGION', 'us-west-2')
+                
+                if github_token:
+                    st.markdown(f'<span class="status-indicator status-connected"></span>GitHub Token: Set', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<span class="status-indicator status-disconnected"></span>GitHub Token: Not Set', unsafe_allow_html=True)
+                
+                st.markdown(f'<span class="status-indicator status-connected"></span>AWS Region: {aws_region}', unsafe_allow_html=True)
+                
+                if st.button("🔄 Reload Environment"):
+                    load_dotenv(override=True)
+                    st.success("Environment reloaded!")
+                    st.rerun()
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+            
             # Clear Chat
             if st.button("🗑️ Clear Chat"):
                 st.session_state.messages = []
@@ -200,13 +244,37 @@ class OpenFluxApp:
         """Connect to the MCP server"""
         try:
             with st.spinner("Connecting to MCP server..."):
+                # Disconnect existing client if any
+                if self.mcp_client:
+                    try:
+                        run_async(self.mcp_client.disconnect())
+                    except:
+                        pass
+                
                 self.mcp_client = MCPClient()
-                asyncio.run(self.mcp_client.connect())
+                run_async(self.mcp_client.connect())
                 st.session_state.mcp_connected = True
                 st.success("MCP server connected successfully!")
         except Exception as e:
             st.error(f"Failed to connect to MCP server: {str(e)}")
             st.session_state.mcp_connected = False
+            self.mcp_client = None
+            
+    def disconnect_mcp_server(self):
+        """Disconnect from the MCP server"""
+        try:
+            if self.mcp_client:
+                with st.spinner("Disconnecting from MCP server..."):
+                    run_async(self.mcp_client.disconnect())
+                    self.mcp_client = None
+                    st.session_state.mcp_connected = False
+                    st.success("MCP server disconnected successfully!")
+            else:
+                st.info("MCP server is not connected")
+        except Exception as e:
+            st.error(f"Error disconnecting from MCP server: {str(e)}")
+            # Force cleanup even if disconnect fails
+            self.cleanup()
             
     def index_repository(self):
         """Index the specified GitHub repository"""
@@ -216,7 +284,7 @@ class OpenFluxApp:
                     self.connect_mcp_server()
                 
                 if self.mcp_client:
-                    result = asyncio.run(self.mcp_client.index_repository(st.session_state.github_repo))
+                    result = run_async(self.mcp_client.index_repository(st.session_state.github_repo))
                     st.success(f"Repository {st.session_state.github_repo} indexed successfully!")
                 else:
                     st.error("MCP client not connected")
@@ -291,7 +359,7 @@ class OpenFluxApp:
         try:
             with st.spinner("Searching repository..."):
                 # Perform semantic search using MCP
-                search_results = asyncio.run(
+                search_results = run_async(
                     self.mcp_client.semantic_search(
                         repository=st.session_state.github_repo,
                         query=query
@@ -349,7 +417,20 @@ class OpenFluxApp:
 
 def main():
     app = OpenFluxApp()
-    app.run()
+    
+    # Register cleanup on app shutdown
+    import atexit
+    atexit.register(app.cleanup)
+    
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        logger.info("Application interrupted by user")
+        app.cleanup()
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        app.cleanup()
+        raise
 
 if __name__ == "__main__":
     main()

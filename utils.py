@@ -107,12 +107,27 @@ class StreamlitLogger:
 def run_async_in_streamlit(coro):
     """Run async function in Streamlit context"""
     try:
-        loop = asyncio.get_event_loop()
+        # Try to get the current event loop
+        loop = asyncio.get_running_loop()
+        # If we're already in an event loop, we need to use a different approach
+        import concurrent.futures
+        import threading
+        
+        def run_in_thread():
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
+            
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(coro)
+        # No event loop running, safe to use asyncio.run
+        return asyncio.run(coro)
 
 def format_file_tree(structure: Dict[str, Any], prefix: str = "") -> str:
     """Format repository structure as a tree"""

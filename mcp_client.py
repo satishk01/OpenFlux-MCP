@@ -30,6 +30,15 @@ class MCPClient:
             }
         }
         
+    async def __aenter__(self):
+        """Async context manager entry"""
+        await self.connect()
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        await self.disconnect()
+        
     async def connect(self):
         """Connect to the MCP server"""
         try:
@@ -242,10 +251,17 @@ class MCPClient:
             self.connected = False
             logger.info("MCP server disconnected")
             
-    def __del__(self):
-        """Cleanup when object is destroyed"""
+    def cleanup(self):
+        """Synchronous cleanup for when object is destroyed"""
         if self.process and not self.process.returncode:
             try:
-                asyncio.create_task(self.disconnect())
-            except:
-                pass
+                self.process.terminate()
+                self.process = None
+                self.connected = False
+                logger.info("MCP server process terminated")
+            except Exception as e:
+                logger.error(f"Error during cleanup: {e}")
+                
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        self.cleanup()
