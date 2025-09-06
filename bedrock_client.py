@@ -1,8 +1,10 @@
 import boto3
 import json
 import logging
+import os
 from typing import Dict, List, Any, Optional
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.credentials import InstanceMetadataProvider, InstanceMetadataFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +14,102 @@ class BedrockClient:
     def __init__(self, region: str = "us-west-2", model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"):
         self.region = region
         self.model_id = model_id
-        self.client = boto3.client('bedrock-runtime', region_name=region)
+        self.client = self._create_bedrock_client(region)
+        
+    def _create_bedrock_client(self, region: str):
+        """Create Bedrock client with proper credential handling"""
+        try:
+            # Check for problematic environment variables
+            self._check_aws_env_vars()
+            
+            # First, try to use EC2 instance role (preferred for EC2)
+            logger.info("Attempting to use EC2 instance role for Bedrock access")
+            
+            # Temporarily clear AWS environment variables to force instance role usage
+            aws_env_vars = {}
+            env_vars_to_clear = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']
+            
+            for var in env_vars_to_clear:
+                if var in os.environ:
+                    aws_env_vars[var] = os.environ[var]
+                    del os.environ[var]
+                    logger.info(f"Temporarily cleared {var} to use instance role")
+            
+            try:
+                # Create session without explicit credentials to use instance role
+                session = boto3.Session()
+                
+                # Test if we can get credentials
+                credentials = session.get_credentials()
+                if credentials:
+                    logger.info(f"Using credentials method: {credentials.method}")
+                    
+                    # Create client with the session
+                    client = session.client('bedrock-runtime', region_name=region)
+                    
+                    # Test the client with a simple call
+                    try:
+                        models = client.list_foundation_models()
+                        logger.info(f"Successfully authenticated with Bedrock using {credentials.method}")
+                        logger.info(f"Available models: {len(models.get('modelSummaries', []))}")
+                        return client
+                    except ClientError as e:
+                        if "UnrecognizedClientException" in str(e):
+                            logger.warning("Instance role credentials are invalid")
+                        else:
+                            logger.warning(f"Bedrock access test failed: {e}")
+                            
+            finally:
+                # Restore environment variables
+                for var, value in aws_env_vars.items():
+                    os.environ[var] = value
+            
+            # Fallback: try with explicit profile if set
+            aws_profile = os.getenv('AWS_PROFILE')
+            if aws_profile and aws_profile != 'default':
+                logger.info(f"Trying with AWS profile: {aws_profile}")
+                session = boto3.Session(profile_name=aws_profile)
+                client = session.client('bedrock-runtime', region_name=region)
+                
+                try:
+                    models = client.list_foundation_models()
+                    logger.info(f"Successfully authenticated with profile: {aws_profile}")
+                    return client
+                except ClientError as e:
+                    logger.warning(f"Profile authentication failed: {e}")
+            
+            # Final fallback: default client (will use environment variables if available)
+            logger.info("Using default boto3 client configuration")
+            client = boto3.client('bedrock-runtime', region_name=region)
+            
+            # Test the client
+            try:
+                models = client.list_foundation_models()
+                logger.info("Successfully authenticated with default configuration")
+                return client
+            except ClientError as e:
+                logger.error(f"All authentication methods failed: {e}")
+                raise Exception(f"Unable to authenticate with AWS Bedrock: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error creating Bedrock client: {e}")
+            raise
+            
+    def _check_aws_env_vars(self):
+        """Check and log AWS environment variables"""
+        aws_vars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE', 'AWS_REGION']
+        
+        logger.info("AWS Environment Variables:")
+        for var in aws_vars:
+            value = os.getenv(var)
+            if value:
+                if 'KEY' in var or 'TOKEN' in var:
+                    masked_value = value[:8] + '...' + value[-4:] if len(value) > 12 else '***'
+                    logger.info(f"  {var}: {masked_value}")
+                else:
+                    logger.info(f"  {var}: {value}")
+            else:
+                logger.info(f"  {var}: Not set")
         
     def generate_response(self, prompt: str, context: str = None) -> str:
         """Generate a response using the selected Bedrock model"""

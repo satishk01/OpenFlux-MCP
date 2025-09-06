@@ -251,6 +251,10 @@ class OpenFluxApp:
                         st.success("App restarted!")
                         st.rerun()
                 
+                # AWS Diagnostics
+                if st.button("🔍 AWS Diagnostics"):
+                    self.run_aws_diagnostics()
+                
                 st.markdown('</div>', unsafe_allow_html=True)
             
             # Clear Chat
@@ -294,6 +298,68 @@ class OpenFluxApp:
             st.error(f"Error disconnecting from MCP server: {str(e)}")
             # Force cleanup even if disconnect fails
             self.cleanup()
+            
+    def run_aws_diagnostics(self):
+        """Run AWS diagnostics to help debug credential issues"""
+        try:
+            from aws_utils import test_aws_credentials, test_bedrock_access, get_ec2_instance_metadata, clear_aws_env_credentials, restore_aws_env_credentials
+            
+            with st.spinner("Running AWS diagnostics..."):
+                # Check EC2 metadata
+                ec2_info = get_ec2_instance_metadata()
+                
+                if ec2_info["is_ec2"]:
+                    st.success(f"✅ Running on EC2 instance: {ec2_info['instance_id']}")
+                    if ec2_info["iam_role"]:
+                        st.info(f"📋 IAM Role: {ec2_info['iam_role']}")
+                    else:
+                        st.warning("⚠️ No IAM role attached to EC2 instance")
+                else:
+                    st.info("ℹ️ Not running on EC2 instance")
+                
+                # Test current credentials
+                st.write("**Testing current AWS credentials:**")
+                cred_test = test_aws_credentials(st.session_state.aws_region)
+                
+                if cred_test["success"]:
+                    st.success(f"✅ AWS credentials working - Method: {cred_test['method']}")
+                    st.info(f"Account: {cred_test['account']}")
+                else:
+                    st.error(f"❌ AWS credentials failed: {cred_test['error']}")
+                
+                # Test Bedrock access
+                st.write("**Testing Bedrock access:**")
+                bedrock_test = test_bedrock_access(st.session_state.aws_region)
+                
+                if bedrock_test["success"]:
+                    st.success(f"✅ Bedrock access working - {bedrock_test['models_available']} models available")
+                    if bedrock_test["claude_available"]:
+                        st.info("✅ Claude models available")
+                    if bedrock_test["nova_available"]:
+                        st.info("✅ Nova models available")
+                else:
+                    st.error(f"❌ Bedrock access failed: {bedrock_test['error']}")
+                    
+                    # If on EC2, try clearing env vars to force instance role
+                    if ec2_info["is_ec2"] and ec2_info["iam_role"]:
+                        st.write("**Trying with instance role only:**")
+                        
+                        # Clear environment credentials temporarily
+                        saved_creds = clear_aws_env_credentials()
+                        
+                        try:
+                            bedrock_test_role = test_bedrock_access(st.session_state.aws_region)
+                            if bedrock_test_role["success"]:
+                                st.success("✅ Bedrock works with instance role!")
+                                st.info("💡 Suggestion: Remove AWS credentials from environment variables")
+                            else:
+                                st.error(f"❌ Instance role also failed: {bedrock_test_role['error']}")
+                        finally:
+                            # Restore credentials
+                            restore_aws_env_credentials(saved_creds)
+                
+        except Exception as e:
+            st.error(f"Diagnostics failed: {str(e)}")
             
     def index_repository(self):
         """Index the specified GitHub repository"""
