@@ -59,13 +59,41 @@ class MCPSyncClient:
     async def _connect_async(self):
         """Async connection logic"""
         try:
+            # Check if uvx is available
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "uvx", "--version",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await proc.wait()
+                if proc.returncode != 0:
+                    raise FileNotFoundError()
+            except FileNotFoundError:
+                raise Exception(
+                    "uvx command not found. Please install uv first:\n"
+                    "1. Visit: https://docs.astral.sh/uv/getting-started/installation/\n"
+                    "2. Or run: pip install uv\n"
+                    "3. Then restart the application"
+                )
+            
             # Validate environment
             github_token = self.server_config["env"]["GITHUB_TOKEN"]
             if not github_token:
-                raise Exception("GITHUB_TOKEN environment variable is required. Please set it in your .env file.")
+                raise Exception(
+                    "GITHUB_TOKEN environment variable is required.\n"
+                    "1. Create a GitHub Personal Access Token at: https://github.com/settings/tokens\n"
+                    "2. Set it in your .env file: GITHUB_TOKEN=your_token_here\n"
+                    "3. Restart the application"
+                )
             
             if github_token == "your-github-token":
-                raise Exception("Please replace 'your-github-token' with your actual GitHub token in the .env file")
+                raise Exception(
+                    "Please replace 'your-github-token' with your actual GitHub token in the .env file.\n"
+                    "1. Get a token from: https://github.com/settings/tokens\n"
+                    "2. Update .env file: GITHUB_TOKEN=your_actual_token\n"
+                    "3. Restart the application"
+                )
                 
             logger.info(f"Using GitHub token: {github_token[:8]}...")
             logger.info(f"AWS Region: {self.server_config['env']['AWS_REGION']}")
@@ -87,13 +115,32 @@ class MCPSyncClient:
             )
             
             # Wait a moment for the process to start
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             
             # Check if process is still running
             if self.process.returncode is not None:
                 stderr_output = await self.process.stderr.read()
+                stdout_output = await self.process.stdout.read()
                 error_msg = stderr_output.decode() if stderr_output else "Unknown error"
-                raise Exception(f"MCP server process failed to start: {error_msg}")
+                stdout_msg = stdout_output.decode() if stdout_output else ""
+                
+                full_error = f"MCP server process failed to start (exit code: {self.process.returncode})\n"
+                if error_msg:
+                    full_error += f"Error: {error_msg}\n"
+                if stdout_msg:
+                    full_error += f"Output: {stdout_msg}\n"
+                
+                # Common error handling
+                if "command not found" in error_msg.lower() or "not found" in error_msg.lower():
+                    full_error += "\nSolution: Install uv/uvx:\n"
+                    full_error += "1. Visit: https://docs.astral.sh/uv/getting-started/installation/\n"
+                    full_error += "2. Or run: pip install uv"
+                elif "permission denied" in error_msg.lower():
+                    full_error += "\nSolution: Check file permissions and try running as administrator"
+                elif "github" in error_msg.lower() and "token" in error_msg.lower():
+                    full_error += "\nSolution: Check your GitHub token is valid and has proper permissions"
+                
+                raise Exception(full_error)
             
             # Initialize MCP protocol
             await self._initialize_protocol()

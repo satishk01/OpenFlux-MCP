@@ -37,11 +37,11 @@ class Config:
     
     # Bedrock Model Configuration
     BEDROCK_MODELS = {
-        "claude-3.5-sonnet-v2": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "claude-3.5-sonnet-v2": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
         "amazon-nova-pro": "amazon.nova-pro-v1:0"
     }
     
-    DEFAULT_MODEL = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    DEFAULT_MODEL = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
     
     # Logging Configuration
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

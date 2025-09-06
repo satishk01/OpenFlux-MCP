@@ -141,7 +141,7 @@ class OpenFluxApp:
         if 'mcp_connected' not in st.session_state:
             st.session_state.mcp_connected = False
         if 'selected_model' not in st.session_state:
-            st.session_state.selected_model = 'anthropic.claude-3-5-sonnet-20241022-v2:0'
+            st.session_state.selected_model = 'us.anthropic.claude-3-5-sonnet-20241022-v2:0'
         if 'github_repo' not in st.session_state:
             st.session_state.github_repo = ''
         if 'aws_region' not in st.session_state:
@@ -183,7 +183,7 @@ class OpenFluxApp:
                 st.subheader("Model Configuration")
                 
                 model_options = {
-                    'Claude 3.5 Sonnet V2': 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+                    'Claude 3.5 Sonnet V2': 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
                     'Amazon Nova Pro': 'amazon.nova-pro-v1:0'
                 }
                 
@@ -279,7 +279,56 @@ class OpenFluxApp:
                 st.session_state.mcp_connected = True
                 st.success("MCP server connected successfully!")
         except Exception as e:
-            st.error(f"Failed to connect to MCP server: {str(e)}")
+            error_msg = str(e)
+            st.error("Failed to connect to MCP server")
+            
+            # Show detailed error in expandable section
+            with st.expander("🔍 Connection Error Details", expanded=True):
+                st.code(error_msg, language="text")
+                
+                # Provide setup instructions based on error type
+                if "uvx command not found" in error_msg or "uv" in error_msg.lower():
+                    st.markdown("""
+                    ### 🛠️ Setup Required: Install uv/uvx
+                    
+                    The MCP server requires `uvx` to run. Please install it:
+                    
+                    **Option 1: Using pip**
+                    ```bash
+                    pip install uv
+                    ```
+                    
+                    **Option 2: Using the installer**
+                    Visit: https://docs.astral.sh/uv/getting-started/installation/
+                    
+                    After installation, restart the application.
+                    """)
+                    
+                elif "GITHUB_TOKEN" in error_msg:
+                    st.markdown("""
+                    ### 🔑 Setup Required: GitHub Token
+                    
+                    You need a GitHub Personal Access Token to access repositories:
+                    
+                    1. **Create a token**: Go to https://github.com/settings/tokens
+                    2. **Set permissions**: Select "repo" scope for private repos, or "public_repo" for public repos
+                    3. **Copy the token** and add it to your `.env` file:
+                       ```
+                       GITHUB_TOKEN=your_actual_token_here
+                       ```
+                    4. **Restart** the application
+                    """)
+                    
+                else:
+                    st.markdown("""
+                    ### 🔧 Troubleshooting Tips
+                    
+                    1. **Check Prerequisites**: Make sure `uv` and `uvx` are installed
+                    2. **Verify Environment**: Check your `.env` file has the correct values
+                    3. **Restart Application**: Try restarting after making changes
+                    4. **Check Logs**: Look at the console output for more details
+                    """)
+            
             st.session_state.mcp_connected = False
             self.mcp_client = None
             

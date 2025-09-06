@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class BedrockClient:
     """Client for interacting with AWS Bedrock models"""
     
-    def __init__(self, region: str = "us-west-2", model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"):
+    def __init__(self, region: str = "us-west-2", model_id: str = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"):
         self.region = region
         self.model_id = model_id
         self.client = self._create_bedrock_client(region)
@@ -125,9 +125,9 @@ class BedrockClient:
     def generate_response(self, prompt: str, context: str = None) -> str:
         """Generate a response using the selected Bedrock model"""
         try:
-            if self.model_id.startswith("anthropic.claude"):
+            if "anthropic.claude" in self.model_id or "claude" in self.model_id.lower():
                 return self._call_claude(prompt, context)
-            elif self.model_id.startswith("amazon.nova"):
+            elif "amazon.nova" in self.model_id or "nova" in self.model_id.lower():
                 return self._call_nova(prompt, context)
             else:
                 raise ValueError(f"Unsupported model: {self.model_id}")

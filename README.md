@@ -40,6 +40,8 @@ OpenFlux is a Streamlit-based application that integrates with Model Context Pro
 - GitHub Token
 - uv package manager (for MCP server)
 
+⚠️ **Important**: For detailed setup instructions, see the **[Complete Setup Guide](SETUP_GUIDE.md)**
+
 ## Installation
 
 ### Local Development

@@ -92,7 +92,7 @@ def test_bedrock_client():
         print("✅ Bedrock client initialized successfully")
         
         # Test model validation
-        claude_client = BedrockClient(model_id="anthropic.claude-3-5-sonnet-20241022-v2:0")
+        claude_client = BedrockClient(model_id="us.anthropic.claude-3-5-sonnet-20241022-v2:0")
         nova_client = BedrockClient(model_id="amazon.nova-pro-v1:0")
         print("✅ Model configurations validated")
         
