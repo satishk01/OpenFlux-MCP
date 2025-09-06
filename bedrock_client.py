@@ -204,8 +204,10 @@ If no context is provided, respond as a helpful coding assistant."""
         
         body = {
             "messages": messages,
-            "maxTokens": 4000,
-            "temperature": 0.7
+            "inferenceConfig": {
+                "maxTokens": 4000,
+                "temperature": 0.7
+            }
         }
         
         response = self.client.invoke_model(

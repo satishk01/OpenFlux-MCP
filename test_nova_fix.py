@@ -22,20 +22,26 @@ def test_nova_parameters():
     
     body = {
         "messages": messages,
-        "maxTokens": 4000,  # Correct parameter name for Nova
-        "temperature": 0.7
+        "inferenceConfig": {
+            "maxTokens": 4000,
+            "temperature": 0.7
+        }
     }
     
-    print("✅ Nova request body created with correct parameters")
+    print("✅ Nova request body created with correct nested structure")
     print(f"Body keys: {list(body.keys())}")
+    print(f"InferenceConfig keys: {list(body['inferenceConfig'].keys())}")
     
     # Verify correct parameters
     checks = [
         ("top_p not in body", "top_p" not in body),
         ("max_tokens not in body", "max_tokens" not in body),
-        ("maxTokens in body", "maxTokens" in body),
-        ("temperature in body", "temperature" in body),
-        ("messages in body", "messages" in body)
+        ("maxTokens not in root body", "maxTokens" not in body),
+        ("temperature not in root body", "temperature" not in body),
+        ("messages in body", "messages" in body),
+        ("inferenceConfig in body", "inferenceConfig" in body),
+        ("maxTokens in inferenceConfig", "maxTokens" in body.get("inferenceConfig", {})),
+        ("temperature in inferenceConfig", "temperature" in body.get("inferenceConfig", {}))
     ]
     
     all_passed = True
@@ -52,6 +58,6 @@ if __name__ == "__main__":
     success = test_nova_parameters()
     if success:
         print("\n🎉 Nova parameter fix verified!")
-        print("The Nova model should now work without ValidationException errors.")
+        print("The Nova model should now work with the correct nested inferenceConfig structure.")
     else:
         print("\n❌ Nova parameter fix failed!")
