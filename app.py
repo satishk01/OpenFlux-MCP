@@ -911,6 +911,11 @@ Please analyze these search results and provide a helpful response about the cod
                 })
                 
         except Exception as e:
+            logger.error(f"General query error: {e}", exc_info=True)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"❌ I encountered an error while generating a response: {str(e)}\n\nPlease try rephrasing your question or check your connection."
+            })
             
     def handle_query_with_fallback(self, query: str, repo: str = None):
         """Handle queries with fallback to general responses when MCP fails"""
