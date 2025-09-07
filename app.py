@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 import subprocess
 import tempfile
 import logging
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -120,6 +121,8 @@ class OpenFluxApp:
     def __init__(self):
         self.mcp_client = None
         self.bedrock_client = None
+        self.last_health_check = 0
+        self.health_check_interval = 30  # Check health every 30 seconds
         self.initialize_session_state()
         
     def cleanup(self):
@@ -150,6 +153,8 @@ class OpenFluxApp:
             st.session_state.indexed_repos = set()
         if 'last_index_result' not in st.session_state:
             st.session_state.last_index_result = None
+        if 'connection_stable' not in st.session_state:
+            st.session_state.connection_stable = False
             
     def render_sidebar(self):
         """Render the sidebar with configuration options"""
@@ -161,15 +166,26 @@ class OpenFluxApp:
                 st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
                 st.subheader("MCP Server Status")
                 
-                # Check connection health in real-time
-                is_healthy = False
+                # Check connection health periodically (not every render)
+                current_time = time.time()
+                is_healthy = st.session_state.connection_stable
+                
                 if self.mcp_client and st.session_state.mcp_connected:
-                    try:
-                        is_healthy = self.mcp_client.check_connection_health()
-                        if not is_healthy:
+                    # Only check health every 30 seconds to avoid overwhelming the connection
+                    if current_time - self.last_health_check > self.health_check_interval:
+                        try:
+                            is_healthy = self.mcp_client.check_connection_health()
+                            st.session_state.connection_stable = is_healthy
+                            self.last_health_check = current_time
+                            if not is_healthy:
+                                st.session_state.mcp_connected = False
+                                logger.warning("Connection health check failed")
+                        except Exception as e:
+                            logger.error(f"Health check error: {e}")
                             st.session_state.mcp_connected = False
-                    except:
-                        st.session_state.mcp_connected = False
+                            st.session_state.connection_stable = False
+                else:
+                    st.session_state.connection_stable = False
                 
                 status_color = "status-connected" if is_healthy else "status-disconnected"
                 status_text = "Connected & Healthy" if is_healthy else "Disconnected"
@@ -181,9 +197,25 @@ class OpenFluxApp:
                 </div>
                 ''', unsafe_allow_html=True)
                 
-                # Show indexed repositories count
-                if st.session_state.indexed_repos:
+                # Show connection details
+                if is_healthy and self.mcp_client:
                     st.markdown(f'📚 Indexed repositories: {len(st.session_state.indexed_repos)}')
+                    
+                    # Show last health check time
+                    if hasattr(self, 'last_health_check') and self.last_health_check > 0:
+                        time_since_check = int(time.time() - self.last_health_check)
+                        st.markdown(f'🕐 Last health check: {time_since_check}s ago')
+                
+                # Show connection troubleshooting if disconnected
+                elif not is_healthy:
+                    st.markdown('⚠️ Connection issues detected')
+                    if st.button("🔧 Auto-Fix Connection"):
+                        with st.spinner("Attempting to fix connection..."):
+                            if self.ensure_mcp_connection():
+                                st.success("✅ Connection restored!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Auto-fix failed. Try manual reconnection.")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -302,22 +334,64 @@ class OpenFluxApp:
                 st.session_state.messages = []
                 st.rerun()
                 
+    def ensure_mcp_connection(self):
+        """Ensure MCP connection is established and healthy"""
+        try:
+            # If no client exists, create one
+            if not self.mcp_client:
+                logger.info("Creating new MCP client")
+                self.mcp_client = MCPRobustClient()
+            
+            # If not connected or unhealthy, connect
+            if not st.session_state.mcp_connected or not st.session_state.connection_stable:
+                logger.info("Establishing MCP connection")
+                self.mcp_client.connect()
+                st.session_state.mcp_connected = True
+                st.session_state.connection_stable = True
+                self.last_health_check = time.time()
+                return True
+            
+            # If connected, do a quick health check
+            if self.mcp_client.check_connection_health():
+                return True
+            else:
+                logger.warning("Connection unhealthy, reconnecting")
+                self.mcp_client.connect()
+                st.session_state.mcp_connected = True
+                st.session_state.connection_stable = True
+                self.last_health_check = time.time()
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to ensure MCP connection: {e}")
+            st.session_state.mcp_connected = False
+            st.session_state.connection_stable = False
+            return False
+    
     def connect_mcp_server(self):
-        """Connect to the MCP server"""
+        """Connect to the MCP server with better error handling"""
         try:
             with st.spinner("Connecting to MCP server..."):
-                # Disconnect existing client if any
+                # Cleanup existing client if any
                 if self.mcp_client:
                     try:
-                        self.mcp_client.disconnect()
+                        self.mcp_client.cleanup()
                     except:
                         pass
                 
+                # Create new client and connect
                 self.mcp_client = MCPRobustClient()
                 logger.info(f"Created MCP client: {type(self.mcp_client)}")
                 self.mcp_client.connect()
+                
+                # Mark as connected and stable
                 st.session_state.mcp_connected = True
-                st.success("MCP server connected successfully!")
+                st.session_state.connection_stable = True
+                self.last_health_check = time.time()
+                
+                st.success("✅ MCP server connected successfully!")
+                logger.info("MCP server connected successfully")
+                
         except Exception as e:
             error_msg = str(e)
             st.error("Failed to connect to MCP server")
@@ -370,6 +444,12 @@ class OpenFluxApp:
                     """)
             
             st.session_state.mcp_connected = False
+            st.session_state.connection_stable = False
+            if self.mcp_client:
+                try:
+                    self.mcp_client.cleanup()
+                except:
+                    pass
             self.mcp_client = None
             
     def disconnect_mcp_server(self):
@@ -455,14 +535,10 @@ class OpenFluxApp:
         repo = st.session_state.github_repo
         
         try:
-            # Check connection first
-            if not self.mcp_client or not self.mcp_client.check_connection_health():
-                st.warning("MCP connection not healthy, reconnecting...")
-                self.connect_mcp_server()
-                
-                if not self.mcp_client or not st.session_state.mcp_connected:
-                    st.error("Failed to establish MCP connection")
-                    return
+            # Ensure connection is healthy before indexing
+            if not self.ensure_mcp_connection():
+                st.error("❌ Failed to establish MCP connection")
+                return
             
             with st.spinner(f"Indexing repository {repo}... This may take a few minutes for large repositories."):
                 progress_bar = st.progress(0)
@@ -472,7 +548,27 @@ class OpenFluxApp:
                 progress_bar.progress(10)
                 
                 logger.info(f"Starting to index repository: {repo}")
-                result = self.mcp_client.index_repository(repo)
+                
+                # Index with retry logic
+                max_retries = 1  # Only one retry for indexing (it's a longer operation)
+                result = None
+                
+                for attempt in range(max_retries + 1):
+                    try:
+                        result = self.mcp_client.index_repository(repo)
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        logger.warning(f"Index attempt {attempt + 1} failed: {e}")
+                        if attempt < max_retries:
+                            logger.info(f"Retrying indexing (attempt {attempt + 2}/{max_retries + 1})")
+                            if not self.ensure_mcp_connection():
+                                raise Exception("Failed to reconnect for retry")
+                            time.sleep(2)  # Longer pause for indexing retry
+                        else:
+                            raise  # Final attempt failed, re-raise the exception
+                
+                if result is None:
+                    raise Exception("Indexing failed after all retry attempts")
                 
                 progress_bar.progress(80)
                 status_text.text("✅ Processing indexing results...")
@@ -590,14 +686,14 @@ class OpenFluxApp:
         st.rerun()
         
     def handle_repository_search(self, query: str):
-        """Handle repository search queries with better error handling"""
+        """Handle repository search queries with automatic connection management"""
         repo = st.session_state.github_repo
         
-        # Check MCP connection
-        if not self.mcp_client or not self.mcp_client.check_connection_health():
+        # Ensure MCP connection is healthy before proceeding
+        if not self.ensure_mcp_connection():
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": "🔌 MCP server is not connected or unhealthy. Please reconnect to the server first using the sidebar."
+                "content": "🔌 Failed to establish MCP server connection. Please check your setup and try reconnecting manually."
             })
             return
             
@@ -618,12 +714,31 @@ class OpenFluxApp:
             
         try:
             with st.spinner("🔍 Searching repository..."):
-                # Perform semantic search using MCP
-                search_results = self.mcp_client.semantic_search(
-                    repository=repo,
-                    query=query,
-                    max_results=15  # Get more results for better context
-                )
+                # Perform semantic search using MCP with retry logic
+                max_retries = 2
+                search_results = None
+                
+                for attempt in range(max_retries + 1):
+                    try:
+                        search_results = self.mcp_client.semantic_search(
+                            repository=repo,
+                            query=query,
+                            max_results=15  # Get more results for better context
+                        )
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        logger.warning(f"Search attempt {attempt + 1} failed: {e}")
+                        if attempt < max_retries:
+                            # Try to reconnect and retry
+                            logger.info(f"Retrying search (attempt {attempt + 2}/{max_retries + 1})")
+                            if not self.ensure_mcp_connection():
+                                raise Exception("Failed to reconnect for retry")
+                            time.sleep(1)  # Brief pause before retry
+                        else:
+                            raise  # Final attempt failed, re-raise the exception
+                
+                if search_results is None:
+                    raise Exception("Search failed after all retry attempts")
                 
                 # Add tool call message with better formatting
                 tool_content = f"Search Query: {query}\nRepository: {repo}\nResults: {json.dumps(search_results, indent=2)}"
@@ -710,13 +825,29 @@ Please analyze these search results and provide a helpful response about the cod
             
     def run(self):
         """Main application entry point"""
+        # Auto-connect MCP server on first load or if connection is lost
+        if not st.session_state.mcp_connected and not hasattr(st.session_state, 'connection_attempted'):
+            st.session_state.connection_attempted = True
+            with st.spinner("🔄 Initializing MCP connection..."):
+                self.ensure_mcp_connection()
+        
         self.render_sidebar()
         self.render_chat_interface()
         
-        # Auto-connect MCP server on first load
-        if not st.session_state.mcp_connected and not hasattr(st.session_state, 'connection_attempted'):
-            st.session_state.connection_attempted = True
-            self.connect_mcp_server()
+        # Periodic connection maintenance (every 5 minutes)
+        if hasattr(st.session_state, 'last_maintenance'):
+            if time.time() - st.session_state.last_maintenance > 300:  # 5 minutes
+                if self.mcp_client and st.session_state.mcp_connected:
+                    try:
+                        # Quick health check and maintenance
+                        if not self.mcp_client.check_connection_health():
+                            logger.info("Performing connection maintenance")
+                            self.ensure_mcp_connection()
+                    except Exception as e:
+                        logger.error(f"Connection maintenance error: {e}")
+                st.session_state.last_maintenance = time.time()
+        else:
+            st.session_state.last_maintenance = time.time()
 
 def main():
     app = OpenFluxApp()
