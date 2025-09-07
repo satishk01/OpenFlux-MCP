@@ -209,6 +209,7 @@ class OpenFluxApp:
                 # Show connection troubleshooting if disconnected
                 elif not is_healthy:
                     st.markdown('⚠️ Connection issues detected')
+                    st.info("� Don' t worry! I can still help with general programming questions even when repository search isn't available.")
                     if st.button("🔧 Auto-Fix Connection"):
                         with st.spinner("Attempting to fix connection..."):
                             if self.ensure_mcp_connection():
@@ -608,6 +609,8 @@ class OpenFluxApp:
                 st.warning("🔑 GitHub token issue. Check your token permissions.")
             elif "not found" in error_msg.lower():
                 st.warning("🔍 Repository not found. Check the repository name and your access permissions.")
+            elif "unknown tool" in error_msg.lower() or "no indexing tool found" in error_msg.lower():
+                st.warning("🔧 The MCP server doesn't have the required indexing tools available. Please check your MCP server configuration and ensure it supports repository indexing.")
             
             logger.error(f"Index error for {repo}: {e}", exc_info=True)
             
@@ -664,7 +667,8 @@ class OpenFluxApp:
             is_search_query = any(keyword in prompt.lower() for keyword in search_keywords)
             
             if has_repo and is_search_query:
-                self.handle_repository_search(prompt)
+                # Use fallback mechanism for repository searches
+                self.handle_query_with_fallback(prompt, st.session_state.github_repo)
             elif has_repo and not is_search_query:
                 # Ask user if they want to search the repository
                 st.session_state.messages.append({
@@ -740,7 +744,27 @@ class OpenFluxApp:
                 if search_results is None:
                     raise Exception("Search failed after all retry attempts")
                 
-                # Add tool call message with better formatting
+                # Check if search results contain an error
+                if isinstance(search_results, dict):
+                    # Check for error in the response
+                    if search_results.get('isError', False) or 'error' in search_results:
+                        error_content = search_results.get('content', [])
+                        if error_content and isinstance(error_content, list) and len(error_content) > 0:
+                            error_text = error_content[0].get('text', 'Unknown error')
+                            if "unknown tool" in error_text.lower():
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": f"🔧 I'm having trouble accessing the search functionality. The MCP server doesn't recognize the search tool.\n\n**What this means:** The repository search feature isn't available right now.\n\n**What you can do:**\n• Ask me general programming questions\n• Try reconnecting to the MCP server\n• Check your MCP server configuration\n\n**Your question was:** '{query}' - I'd be happy to help with general information about this topic!"
+                                })
+                                return
+                            else:
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": f"❌ Search error: {error_text}\n\nPlease try reconnecting or ask me a general question instead."
+                                })
+                                return
+                
+                # Add tool call message with better formatting (only if no error)
                 tool_content = f"Search Query: {query}\nRepository: {repo}\nResults: {json.dumps(search_results, indent=2)}"
                 st.session_state.messages.append({
                     "role": "tool",
@@ -754,7 +778,7 @@ class OpenFluxApp:
                 if not results:
                     st.session_state.messages.append({
                         "role": "assistant",
-                        "content": f"🔍 No results found for '{query}' in repository '{repo}'. Try rephrasing your search or using different keywords."
+                        "content": f"🔍 No results found for '{query}' in repository '{repo}'.\n\n**Suggestions:**\n• Try different keywords or phrases\n• Use more general terms (e.g., 'authentication' instead of 'auth middleware')\n• Check if the repository contains the type of content you're looking for\n• Make sure the repository has been properly indexed\n\n**Alternative:** Ask me a general question about '{query}' and I'll help with concepts and best practices!"
                     })
                     return
                 
@@ -800,10 +824,21 @@ Please analyze these search results and provide a helpful response about the cod
                     "role": "assistant",
                     "content": "⏱️ Search timed out. Please try again with a more specific query."
                 })
+            elif "unknown tool" in error_msg.lower() or "no search tool found" in error_msg.lower():
+                # Handle MCP tool not available error
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"🔧 I'm having trouble accessing the search functionality. The MCP server doesn't seem to have the expected search tools available.\n\n**What you can try:**\n1. Check if the MCP server is properly configured\n2. Try reconnecting using the sidebar\n3. Verify your MCP server supports semantic search\n\n**Alternative:** You can ask me general questions about programming concepts, and I'll help without needing to search the repository."
+                })
+            elif "no results found" in error_msg.lower() or "empty results" in error_msg.lower():
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"🔍 No results found for '{query}' in repository '{repo}'.\n\n**Suggestions:**\n• Try different keywords or phrases\n• Use more general terms\n• Check if the repository contains the type of content you're looking for\n• Make sure the repository has been properly indexed"
+                })
             else:
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"❌ Search failed: {error_msg}\n\nPlease check your connection and try again."
+                    "content": f"❌ I encountered an issue while searching: {error_msg}\n\n**What you can try:**\n• Check your connection and try again\n• Try reconnecting to the MCP server\n• Use different search terms\n• Ask me a general question instead"
                 })
             
     def handle_general_query(self, query: str):
@@ -818,6 +853,29 @@ Please analyze these search results and provide a helpful response about the cod
                 })
                 
         except Exception as e:
+            
+    def handle_query_with_fallback(self, query: str, repo: str = None):
+        """Handle queries with fallback to general responses when MCP fails"""
+        # First try MCP search if repository is specified
+        if repo and repo in st.session_state.indexed_repos:
+            try:
+                self.handle_repository_search(query)
+                return
+            except Exception as e:
+                logger.warning(f"MCP search failed, falling back to general response: {e}")
+                
+                # Add a note about the fallback
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": f"🔄 I couldn't search the repository directly, but I can still help with your question about: '{query}'\n\nLet me provide general guidance:"
+                })
+        
+        # Fallback to general query
+        enhanced_query = query
+        if repo:
+            enhanced_query = f"Regarding the GitHub repository '{repo}', {query}. Please provide general guidance and best practices."
+        
+        self.handle_general_query(enhanced_query)
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": f"Failed to generate response: {str(e)}"
