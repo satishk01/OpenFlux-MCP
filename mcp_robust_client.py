@@ -32,6 +32,7 @@ class MCPRobustClient:
         self.connection_lock = threading.Lock()
         self.last_activity = time.time()
         self.indexed_repositories = set()  # Track indexed repos
+        self.available_tools = {}  # Store available tools
         self.server_config = {
             "command": "uvx",
             "args": ["awslabs.git-repo-research-mcp-server@latest"],
@@ -252,6 +253,38 @@ class MCPRobustClient:
         
         await self._send_request(initialized_notification)
         logger.info("MCP protocol initialized")
+        
+        # Discover available tools
+        await self._discover_tools()
+        
+    async def _discover_tools(self):
+        """Discover what tools are available from the MCP server"""
+        try:
+            tools_request = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list"
+            }
+            
+            response = await self._send_request(tools_request)
+            
+            if "result" in response and "tools" in response["result"]:
+                tools = response["result"]["tools"]
+                logger.info(f"Available tools: {[tool.get('name', 'unknown') for tool in tools]}")
+                
+                # Store tool names for reference
+                self.available_tools = {tool.get('name'): tool for tool in tools}
+                
+                # Log tool details for debugging
+                for tool in tools:
+                    logger.info(f"Tool: {tool.get('name')} - {tool.get('description', 'No description')}")
+            else:
+                logger.warning(f"Unexpected tools/list response: {response}")
+                self.available_tools = {}
+                
+        except Exception as e:
+            logger.error(f"Failed to discover tools: {e}")
+            self.available_tools = {}
         
     async def _send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Send a request to the MCP server and get response"""
@@ -477,6 +510,18 @@ class MCPRobustClient:
     def is_repository_indexed(self, repository: str) -> bool:
         """Check if a repository has been indexed"""
         return repository in self.indexed_repositories
+        
+    def get_available_tools(self) -> Dict[str, Any]:
+        """Get list of available tools"""
+        return self.available_tools.copy()
+        
+    def list_tools(self) -> List[str]:
+        """Get list of available tool names"""
+        return list(self.available_tools.keys())
+        
+    def get_indexed_repositories(self) -> List[str]:
+        """Get list of indexed repositories"""
+        return list(self.indexed_repositories)
         
     async def _get_file_content_async(self, repository: str, file_path: str) -> Dict[str, Any]:
         """Async get file content with better error handling"""
