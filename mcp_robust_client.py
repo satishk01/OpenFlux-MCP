@@ -292,16 +292,41 @@ class MCPRobustClient:
         
         return {}
         
+    def _get_tool_name(self, preferred_names: List[str]) -> Optional[str]:
+        """Get the actual tool name from a list of preferred names"""
+        for name in preferred_names:
+            if name in self.available_tools:
+                return name
+        return None
+        
     async def _index_repository_async(self, repository: str) -> Dict[str, Any]:
         """Async repository indexing with better feedback"""
         logger.info(f"Starting to index repository: {repository}")
+        
+        # Try different possible tool names for indexing
+        index_tool_name = self._get_tool_name([
+            "index_repository",
+            "index-repository", 
+            "index_repo",
+            "index-repo",
+            "repository_index",
+            "repo_index",
+            "clone_and_index",
+            "clone-and-index"
+        ])
+        
+        if not index_tool_name:
+            available_names = list(self.available_tools.keys())
+            raise Exception(f"No indexing tool found. Available tools: {available_names}")
+        
+        logger.info(f"Using indexing tool: {index_tool_name}")
         
         request = {
             "jsonrpc": "2.0",
             "id": int(time.time()),  # Use timestamp as unique ID
             "method": "tools/call",
             "params": {
-                "name": "index_repository",
+                "name": index_tool_name,
                 "arguments": {
                     "repository": repository
                 }
@@ -328,12 +353,33 @@ class MCPRobustClient:
         """Async semantic search with better error handling"""
         logger.info(f"Performing semantic search on {repository} for: {query}")
         
+        # Try different possible tool names for searching
+        search_tool_name = self._get_tool_name([
+            "semantic_search",
+            "semantic-search",
+            "search",
+            "search_repository", 
+            "search-repository",
+            "repo_search",
+            "repo-search",
+            "query",
+            "find",
+            "search_code",
+            "search-code"
+        ])
+        
+        if not search_tool_name:
+            available_names = list(self.available_tools.keys())
+            raise Exception(f"No search tool found. Available tools: {available_names}")
+        
+        logger.info(f"Using search tool: {search_tool_name}")
+        
         request = {
             "jsonrpc": "2.0",
             "id": int(time.time()),  # Use timestamp as unique ID
             "method": "tools/call",
             "params": {
-                "name": "semantic_search",
+                "name": search_tool_name,
                 "arguments": {
                     "repository": repository,
                     "query": query,
