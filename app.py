@@ -648,10 +648,10 @@ class OpenFluxApp:
                     model_id=st.session_state.selected_model
                 )
             
-            # Enhanced query detection for repository searches
+            # Enhanced query detection for different types of repository operations
             search_keywords = [
                 'search', 'find', 'look for', 'show me', 'where is', 'how does',
-                'code', 'function', 'class', 'method', 'variable', 'file',
+                'code', 'function', 'class', 'method', 'variable',
                 'implementation', 'algorithm', 'pattern', 'example',
                 'api', 'endpoint', 'route', 'handler', 'controller',
                 'test', 'spec', 'config', 'setup', 'init',
@@ -662,20 +662,78 @@ class OpenFluxApp:
                 'component', 'service', 'util', 'helper'
             ]
             
-            # Check if we have a repository and if this looks like a code search
+            file_keywords = [
+                'file', 'show file', 'get file', 'read file', 'file content',
+                'open file', 'view file', 'display file', 'contents of'
+            ]
+            
+            structure_keywords = [
+                'structure', 'organization', 'layout', 'directories', 'folders',
+                'tree', 'hierarchy', 'files and folders', 'project structure',
+                'repository structure', 'repo structure', 'directory tree'
+            ]
+            
+            pattern_keywords = [
+                'pattern', 'regex', 'grep', 'match', 'contains',
+                'code pattern', 'search pattern', 'find pattern'
+            ]
+            
+            # Check if we have a repository and what type of operation is requested
             has_repo = bool(st.session_state.github_repo)
             is_search_query = any(keyword in prompt.lower() for keyword in search_keywords)
+            is_file_request = any(keyword in prompt.lower() for keyword in file_keywords)
+            is_structure_request = any(keyword in prompt.lower() for keyword in structure_keywords)
+            is_pattern_search = any(keyword in prompt.lower() for keyword in pattern_keywords)
             
-            if has_repo and is_search_query:
-                # Use fallback mechanism for repository searches
+            if has_repo and is_structure_request:
+                # Handle repository structure requests
+                self.handle_repository_structure_request(st.session_state.github_repo)
+            elif has_repo and is_file_request:
+                # Try to extract file path from the prompt
+                # Simple extraction - look for common file patterns
+                import re
+                file_patterns = [
+                    r'file[:\s]+([^\s]+\.[a-zA-Z0-9]+)',  # "file: filename.ext"
+                    r'([^\s]+\.[a-zA-Z0-9]+)',  # "filename.ext"
+                    r'([^\s]+/[^\s]+\.[a-zA-Z0-9]+)',  # "path/filename.ext"
+                ]
+                
+                file_path = None
+                for pattern in file_patterns:
+                    match = re.search(pattern, prompt)
+                    if match:
+                        file_path = match.group(1)
+                        break
+                
+                if file_path:
+                    self.handle_file_request(st.session_state.github_repo, file_path)
+                else:
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"I'd be happy to help you get file content from '{st.session_state.github_repo}'. Please specify the file path you'd like to see. For example: 'show me the file src/main.py' or 'get file README.md'"
+                    })
+            elif has_repo and is_pattern_search:
+                # Try to extract pattern from the prompt
+                import re
+                pattern_matches = re.findall(r'["\']([^"\']+)["\']', prompt)  # Look for quoted patterns
+                if pattern_matches:
+                    pattern = pattern_matches[0]
+                    self.handle_code_search_request(st.session_state.github_repo, pattern)
+                else:
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"I can search for code patterns in '{st.session_state.github_repo}'. Please specify the pattern you'd like to search for. For example: 'search for pattern \"function main\"' or 'find pattern \"class User\"'"
+                    })
+            elif has_repo and is_search_query:
+                # Use fallback mechanism for semantic searches
                 self.handle_query_with_fallback(prompt, st.session_state.github_repo)
-            elif has_repo and not is_search_query:
-                # Ask user if they want to search the repository
+            elif has_repo and not (is_search_query or is_file_request or is_structure_request or is_pattern_search):
+                # Ask user what type of repository operation they want
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": f"I can search the repository '{st.session_state.github_repo}' for information related to your question. Would you like me to search the codebase, or would you prefer a general response?"
+                    "content": f"I can help you with repository '{st.session_state.github_repo}' in several ways:\n\n🔍 **Search**: Find code, functions, or concepts\n📁 **Structure**: Show repository organization\n📄 **Files**: Get specific file content\n🔎 **Patterns**: Search for code patterns\n\nWhat would you like to do? Or I can provide a general response about your question."
                 })
-                # For now, default to general query, but user can rephrase to trigger search
+                # Default to general query
                 self.handle_general_query(prompt)
             else:
                 self.handle_general_query(prompt)
@@ -876,6 +934,171 @@ Please analyze these search results and provide a helpful response about the cod
             enhanced_query = f"Regarding the GitHub repository '{repo}', {query}. Please provide general guidance and best practices."
         
         self.handle_general_query(enhanced_query)
+        
+    def handle_file_request(self, repository: str, file_path: str):
+        """Handle requests for specific file content"""
+        try:
+            with st.spinner(f"📄 Getting file content: {file_path}"):
+                # Ensure connection is healthy
+                if not self.ensure_mcp_connection():
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": "🔌 MCP server connection failed. Please reconnect and try again."
+                    })
+                    return
+                
+                file_content = self.mcp_client.get_file_content(repository, file_path)
+                
+                # Add tool call message
+                tool_content = f"File: {file_path}\nRepository: {repository}\nContent: {json.dumps(file_content, indent=2)}"
+                st.session_state.messages.append({
+                    "role": "tool",
+                    "name": "get_file_content",
+                    "content": tool_content
+                })
+                
+                # Generate response using Bedrock
+                context = f"""Repository: {repository}
+File Path: {file_path}
+File Content:
+{json.dumps(file_content, indent=2)}
+
+Please analyze this file and provide helpful information about its purpose, structure, and key components."""
+                
+                response = self.bedrock_client.generate_response(
+                    f"Please analyze the file {file_path} from repository {repository}", 
+                    context
+                )
+                
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response
+                })
+                
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"File content error for {file_path} in {repository}: {e}", exc_info=True)
+            
+            if "no file access tool found" in error_msg.lower():
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"🔧 File access functionality isn't available. The MCP server doesn't support file content retrieval.\n\nI can still help with general questions about '{file_path}' or repository structure concepts!"
+                })
+            else:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"❌ Failed to get file content: {error_msg}\n\nPlease check the file path and try again."
+                })
+                
+    def handle_repository_structure_request(self, repository: str):
+        """Handle requests for repository structure"""
+        try:
+            with st.spinner(f"📁 Getting repository structure..."):
+                # Ensure connection is healthy
+                if not self.ensure_mcp_connection():
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": "🔌 MCP server connection failed. Please reconnect and try again."
+                    })
+                    return
+                
+                structure = self.mcp_client.get_repository_structure(repository)
+                
+                # Add tool call message
+                tool_content = f"Repository: {repository}\nStructure: {json.dumps(structure, indent=2)}"
+                st.session_state.messages.append({
+                    "role": "tool",
+                    "name": "get_repository_structure",
+                    "content": tool_content
+                })
+                
+                # Generate response using Bedrock
+                context = f"""Repository: {repository}
+Repository Structure:
+{json.dumps(structure, indent=2)}
+
+Please analyze this repository structure and provide insights about the project organization, architecture, and key directories/files."""
+                
+                response = self.bedrock_client.generate_response(
+                    f"Please analyze the structure of repository {repository}", 
+                    context
+                )
+                
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response
+                })
+                
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Repository structure error for {repository}: {e}", exc_info=True)
+            
+            if "no repository structure tool found" in error_msg.lower():
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"🔧 Repository structure functionality isn't available. The MCP server doesn't support structure retrieval.\n\nI can still help with general questions about repository organization and best practices!"
+                })
+            else:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"❌ Failed to get repository structure: {error_msg}\n\nPlease check your connection and try again."
+                })
+                
+    def handle_code_search_request(self, repository: str, pattern: str, file_type: str = None):
+        """Handle code pattern search requests"""
+        try:
+            with st.spinner(f"🔍 Searching for code pattern: {pattern}"):
+                # Ensure connection is healthy
+                if not self.ensure_mcp_connection():
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": "🔌 MCP server connection failed. Please reconnect and try again."
+                    })
+                    return
+                
+                search_results = self.mcp_client.search_code(repository, pattern, file_type)
+                
+                # Add tool call message
+                tool_content = f"Pattern: {pattern}\nRepository: {repository}\nFile Type: {file_type or 'All'}\nResults: {json.dumps(search_results, indent=2)}"
+                st.session_state.messages.append({
+                    "role": "tool",
+                    "name": "search_code",
+                    "content": tool_content
+                })
+                
+                # Generate response using Bedrock
+                context = f"""Repository: {repository}
+Search Pattern: {pattern}
+File Type Filter: {file_type or 'All files'}
+Search Results:
+{json.dumps(search_results, indent=2)}
+
+Please analyze these code search results and provide insights about the pattern matches found."""
+                
+                response = self.bedrock_client.generate_response(
+                    f"Please analyze the code search results for pattern '{pattern}' in repository {repository}", 
+                    context
+                )
+                
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response
+                })
+                
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Code search error for pattern '{pattern}' in {repository}: {e}", exc_info=True)
+            
+            if "no code search tool found" in error_msg.lower():
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"🔧 Code search functionality isn't available. The MCP server doesn't support pattern-based code search.\n\nI can still help with general questions about '{pattern}' or code search techniques!"
+                })
+            else:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"❌ Failed to search code: {error_msg}\n\nPlease check your search pattern and try again."
+                })
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": f"Failed to generate response: {str(e)}"

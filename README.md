@@ -184,9 +184,20 @@ The application uses the following MCP server configuration:
 
 ### MCP Client Methods
 
-- `semantic_search(repository, query, max_results)` - Perform semantic search
-- `index_repository(repository)` - Index repository for search
-- `get_file_content(repository, file_path)` - Get specific file content
+#### Core Search & Indexing
+- `semantic_search(repository, query, max_results)` - Perform semantic search using natural language
+- `index_repository(repository)` - Index repository for semantic search capabilities
+
+#### Repository Analysis  
+- `get_repository_structure(repository)` - Get directory structure and file organization
+- `get_file_content(repository, file_path)` - Get content of specific files
+- `search_code(repository, pattern, file_type)` - Search for code patterns or text matches
+
+#### Supported Query Types in App
+- **Semantic Search**: "Find authentication functions", "Show me error handling"
+- **Repository Structure**: "Show repository structure", "What's the project organization?"
+- **File Access**: "Show me the file src/main.py", "Get file README.md"
+- **Pattern Search**: "Search for pattern 'function main'", "Find 'class User'"
 - `search_code(repository, pattern, file_type)` - Search code patterns
 - `get_repository_structure(repository)` - Get repository structure
 

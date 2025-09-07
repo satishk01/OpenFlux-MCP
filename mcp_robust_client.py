@@ -432,6 +432,189 @@ class MCPRobustClient:
         """Check if a repository has been indexed"""
         return repository in self.indexed_repositories
         
+    async def _get_file_content_async(self, repository: str, file_path: str) -> Dict[str, Any]:
+        """Async get file content with better error handling"""
+        logger.info(f"Getting file content from {repository}: {file_path}")
+        
+        # Try different possible tool names for file access
+        file_tool_name = self._get_tool_name([
+            "get_file_content",
+            "get-file-content",
+            "file_content",
+            "file-content",
+            "read_file",
+            "read-file",
+            "get_file",
+            "get-file"
+        ])
+        
+        if not file_tool_name:
+            available_names = list(self.available_tools.keys())
+            raise Exception(f"No file access tool found. Available tools: {available_names}")
+        
+        logger.info(f"Using file access tool: {file_tool_name}")
+        
+        request = {
+            "jsonrpc": "2.0",
+            "id": int(time.time()),
+            "method": "tools/call",
+            "params": {
+                "name": file_tool_name,
+                "arguments": {
+                    "repository": repository,
+                    "file_path": file_path
+                }
+            }
+        }
+        
+        response = await self._send_request(request)
+        
+        if "error" in response:
+            error_msg = response["error"].get("message", "Unknown error")
+            logger.error(f"Get file content error: {error_msg}")
+            raise Exception(f"Failed to get file content: {error_msg}")
+        
+        result = response.get("result", {})
+        logger.info(f"File content retrieved successfully")
+        
+        return result
+        
+    async def _get_repository_structure_async(self, repository: str) -> Dict[str, Any]:
+        """Async get repository structure with better error handling"""
+        logger.info(f"Getting repository structure for: {repository}")
+        
+        # Try different possible tool names for repository structure
+        structure_tool_name = self._get_tool_name([
+            "get_repository_structure",
+            "get-repository-structure",
+            "repository_structure",
+            "repository-structure",
+            "repo_structure",
+            "repo-structure",
+            "list_files",
+            "list-files",
+            "tree"
+        ])
+        
+        if not structure_tool_name:
+            available_names = list(self.available_tools.keys())
+            raise Exception(f"No repository structure tool found. Available tools: {available_names}")
+        
+        logger.info(f"Using repository structure tool: {structure_tool_name}")
+        
+        request = {
+            "jsonrpc": "2.0",
+            "id": int(time.time()),
+            "method": "tools/call",
+            "params": {
+                "name": structure_tool_name,
+                "arguments": {
+                    "repository": repository
+                }
+            }
+        }
+        
+        response = await self._send_request(request)
+        
+        if "error" in response:
+            error_msg = response["error"].get("message", "Unknown error")
+            logger.error(f"Get repository structure error: {error_msg}")
+            raise Exception(f"Failed to get repository structure: {error_msg}")
+        
+        result = response.get("result", {})
+        logger.info(f"Repository structure retrieved successfully")
+        
+        return result
+        
+    async def _search_code_async(self, repository: str, pattern: str, file_type: str = None) -> Dict[str, Any]:
+        """Async code search with better error handling"""
+        logger.info(f"Searching code in {repository} for pattern: {pattern}")
+        
+        # Try different possible tool names for code search
+        code_search_tool_name = self._get_tool_name([
+            "search_code",
+            "search-code",
+            "code_search",
+            "code-search",
+            "grep",
+            "find_code",
+            "find-code",
+            "pattern_search",
+            "pattern-search"
+        ])
+        
+        if not code_search_tool_name:
+            available_names = list(self.available_tools.keys())
+            raise Exception(f"No code search tool found. Available tools: {available_names}")
+        
+        logger.info(f"Using code search tool: {code_search_tool_name}")
+        
+        arguments = {
+            "repository": repository,
+            "pattern": pattern
+        }
+        
+        if file_type:
+            arguments["file_type"] = file_type
+        
+        request = {
+            "jsonrpc": "2.0",
+            "id": int(time.time()),
+            "method": "tools/call",
+            "params": {
+                "name": code_search_tool_name,
+                "arguments": arguments
+            }
+        }
+        
+        response = await self._send_request(request)
+        
+        if "error" in response:
+            error_msg = response["error"].get("message", "Unknown error")
+            logger.error(f"Code search error: {error_msg}")
+            raise Exception(f"Failed to search code: {error_msg}")
+        
+        result = response.get("result", {})
+        logger.info(f"Code search completed, found results")
+        
+        return result
+        
+    def get_file_content(self, repository: str, file_path: str) -> Dict[str, Any]:
+        """Get content of a specific file from repository (synchronous)"""
+        if not self.check_connection_health():
+            raise Exception("MCP server not connected or unhealthy")
+        
+        try:
+            return self._run_in_thread(self._get_file_content_async(repository, file_path))
+        except Exception as e:
+            if not self.check_connection_health():
+                self.connected = False
+            raise
+            
+    def get_repository_structure(self, repository: str) -> Dict[str, Any]:
+        """Get the structure of a repository (synchronous)"""
+        if not self.check_connection_health():
+            raise Exception("MCP server not connected or unhealthy")
+        
+        try:
+            return self._run_in_thread(self._get_repository_structure_async(repository))
+        except Exception as e:
+            if not self.check_connection_health():
+                self.connected = False
+            raise
+            
+    def search_code(self, repository: str, pattern: str, file_type: str = None) -> Dict[str, Any]:
+        """Search for code patterns in repository (synchronous)"""
+        if not self.check_connection_health():
+            raise Exception("MCP server not connected or unhealthy")
+        
+        try:
+            return self._run_in_thread(self._search_code_async(repository, pattern, file_type))
+        except Exception as e:
+            if not self.check_connection_health():
+                self.connected = False
+            raise
+        
     def get_indexed_repositories(self) -> List[str]:
         """Get list of indexed repositories"""
         return list(self.indexed_repositories)
