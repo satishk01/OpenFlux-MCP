@@ -338,6 +338,7 @@ class MCPRobustClient:
         
         # Try different possible tool names for indexing
         index_tool_name = self._get_tool_name([
+            "create_research_repository",  # Actual tool name from MCP server
             "index_repository",
             "index-repository", 
             "index_repo",
@@ -354,15 +355,23 @@ class MCPRobustClient:
         
         logger.info(f"Using indexing tool: {index_tool_name}")
         
+        # Prepare arguments based on the tool name
+        if index_tool_name == "create_research_repository":
+            arguments = {
+                "repository_path": repository  # This tool expects repository_path
+            }
+        else:
+            arguments = {
+                "repository": repository  # Fallback for other tools
+            }
+        
         request = {
             "jsonrpc": "2.0",
             "id": int(time.time()),  # Use timestamp as unique ID
             "method": "tools/call",
             "params": {
                 "name": index_tool_name,
-                "arguments": {
-                    "repository": repository
-                }
+                "arguments": arguments
             }
         }
         
@@ -388,6 +397,7 @@ class MCPRobustClient:
         
         # Try different possible tool names for searching
         search_tool_name = self._get_tool_name([
+            "search_research_repository",  # Actual tool name from MCP server
             "semantic_search",
             "semantic-search",
             "search",
@@ -407,17 +417,27 @@ class MCPRobustClient:
         
         logger.info(f"Using search tool: {search_tool_name}")
         
+        # Prepare arguments based on the tool name
+        if search_tool_name == "search_research_repository":
+            arguments = {
+                "index_path": repository,  # This tool expects index_path
+                "query": query,
+                "limit": max_results  # This tool uses 'limit' instead of 'max_results'
+            }
+        else:
+            arguments = {
+                "repository": repository,
+                "query": query,
+                "max_results": max_results
+            }
+        
         request = {
             "jsonrpc": "2.0",
             "id": int(time.time()),  # Use timestamp as unique ID
             "method": "tools/call",
             "params": {
                 "name": search_tool_name,
-                "arguments": {
-                    "repository": repository,
-                    "query": query,
-                    "max_results": max_results
-                }
+                "arguments": arguments
             }
         }
         
@@ -529,6 +549,7 @@ class MCPRobustClient:
         
         # Try different possible tool names for file access
         file_tool_name = self._get_tool_name([
+            "access_file",  # Actual tool name from MCP server
             "get_file_content",
             "get-file-content",
             "file_content",
@@ -545,16 +566,26 @@ class MCPRobustClient:
         
         logger.info(f"Using file access tool: {file_tool_name}")
         
+        # Prepare arguments based on the tool name
+        if file_tool_name == "access_file":
+            # For access_file, we need to format the path as repository_name/repository/file_path
+            repo_name = repository.split('/')[-1].replace('.git', '')
+            arguments = {
+                "filepath": f"{repo_name}/repository/{file_path}"
+            }
+        else:
+            arguments = {
+                "repository": repository,
+                "file_path": file_path
+            }
+        
         request = {
             "jsonrpc": "2.0",
             "id": int(time.time()),
             "method": "tools/call",
             "params": {
                 "name": file_tool_name,
-                "arguments": {
-                    "repository": repository,
-                    "file_path": file_path
-                }
+                "arguments": arguments
             }
         }
         
@@ -576,6 +607,7 @@ class MCPRobustClient:
         
         # Try different possible tool names for repository structure
         structure_tool_name = self._get_tool_name([
+            "access_file",  # Actual tool name from MCP server (can access directories)
             "get_repository_structure",
             "get-repository-structure",
             "repository_structure",
@@ -593,15 +625,25 @@ class MCPRobustClient:
         
         logger.info(f"Using repository structure tool: {structure_tool_name}")
         
+        # Prepare arguments based on the tool name
+        if structure_tool_name == "access_file":
+            # For access_file, get the root directory of the repository
+            repo_name = repository.split('/')[-1].replace('.git', '')
+            arguments = {
+                "filepath": f"{repo_name}/repository"  # Get root directory listing
+            }
+        else:
+            arguments = {
+                "repository": repository
+            }
+        
         request = {
             "jsonrpc": "2.0",
             "id": int(time.time()),
             "method": "tools/call",
             "params": {
                 "name": structure_tool_name,
-                "arguments": {
-                    "repository": repository
-                }
+                "arguments": arguments
             }
         }
         
@@ -623,6 +665,7 @@ class MCPRobustClient:
         
         # Try different possible tool names for code search
         code_search_tool_name = self._get_tool_name([
+            "search_research_repository",  # Actual tool name from MCP server
             "search_code",
             "search-code",
             "code_search",
@@ -640,13 +683,20 @@ class MCPRobustClient:
         
         logger.info(f"Using code search tool: {code_search_tool_name}")
         
-        arguments = {
-            "repository": repository,
-            "pattern": pattern
-        }
-        
-        if file_type:
-            arguments["file_type"] = file_type
+        # Prepare arguments based on the tool name
+        if code_search_tool_name == "search_research_repository":
+            arguments = {
+                "index_path": repository,  # This tool expects index_path
+                "query": pattern,  # Use pattern as query
+                "limit": 10  # Default limit for code search
+            }
+        else:
+            arguments = {
+                "repository": repository,
+                "pattern": pattern
+            }
+            if file_type:
+                arguments["file_type"] = file_type
         
         request = {
             "jsonrpc": "2.0",
