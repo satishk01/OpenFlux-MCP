@@ -29,7 +29,7 @@ for module_name in modules_to_reload:
         importlib.reload(sys.modules[module_name])
 
 # Import MCP components
-from mcp_sync_client import MCPSyncClient
+from mcp_robust_client import MCPRobustClient
 from bedrock_client import BedrockClient
 
 # Page configuration
@@ -146,6 +146,10 @@ class OpenFluxApp:
             st.session_state.github_repo = ''
         if 'aws_region' not in st.session_state:
             st.session_state.aws_region = os.getenv('AWS_REGION', 'us-west-2')
+        if 'indexed_repos' not in st.session_state:
+            st.session_state.indexed_repos = set()
+        if 'last_index_result' not in st.session_state:
+            st.session_state.last_index_result = None
             
     def render_sidebar(self):
         """Render the sidebar with configuration options"""
@@ -157,8 +161,18 @@ class OpenFluxApp:
                 st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
                 st.subheader("MCP Server Status")
                 
-                status_color = "status-connected" if st.session_state.mcp_connected else "status-disconnected"
-                status_text = "Connected" if st.session_state.mcp_connected else "Disconnected"
+                # Check connection health in real-time
+                is_healthy = False
+                if self.mcp_client and st.session_state.mcp_connected:
+                    try:
+                        is_healthy = self.mcp_client.check_connection_health()
+                        if not is_healthy:
+                            st.session_state.mcp_connected = False
+                    except:
+                        st.session_state.mcp_connected = False
+                
+                status_color = "status-connected" if is_healthy else "status-disconnected"
+                status_text = "Connected & Healthy" if is_healthy else "Disconnected"
                 
                 st.markdown(f'''
                 <div>
@@ -166,6 +180,10 @@ class OpenFluxApp:
                     Git Repo Research Server: {status_text}
                 </div>
                 ''', unsafe_allow_html=True)
+                
+                # Show indexed repositories count
+                if st.session_state.indexed_repos:
+                    st.markdown(f'📚 Indexed repositories: {len(st.session_state.indexed_repos)}')
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -214,11 +232,33 @@ class OpenFluxApp:
                     placeholder="owner/repository-name"
                 )
                 
-                if st.button("🔍 Index Repository"):
-                    if st.session_state.github_repo:
-                        self.index_repository()
+                # Show indexing status
+                if st.session_state.github_repo:
+                    is_indexed = st.session_state.github_repo in st.session_state.indexed_repos
+                    if is_indexed:
+                        st.success(f"✅ {st.session_state.github_repo} is indexed")
                     else:
-                        st.error("Please enter a GitHub repository")
+                        st.warning(f"⚠️ {st.session_state.github_repo} needs indexing")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔍 Index Repository"):
+                        if st.session_state.github_repo:
+                            self.index_repository()
+                        else:
+                            st.error("Please enter a GitHub repository")
+                
+                with col2:
+                    if st.button("📋 Show Indexed"):
+                        if st.session_state.indexed_repos:
+                            st.info(f"Indexed repos: {', '.join(st.session_state.indexed_repos)}")
+                        else:
+                            st.info("No repositories indexed yet")
+                
+                # Show last indexing result
+                if st.session_state.last_index_result:
+                    with st.expander("Last Index Result"):
+                        st.json(st.session_state.last_index_result)
                         
                 st.markdown('</div>', unsafe_allow_html=True)
             
@@ -273,7 +313,7 @@ class OpenFluxApp:
                     except:
                         pass
                 
-                self.mcp_client = MCPSyncClient()
+                self.mcp_client = MCPRobustClient()
                 logger.info(f"Created MCP client: {type(self.mcp_client)}")
                 self.mcp_client.connect()
                 st.session_state.mcp_connected = True
@@ -411,23 +451,69 @@ class OpenFluxApp:
             st.error(f"Diagnostics failed: {str(e)}")
             
     def index_repository(self):
-        """Index the specified GitHub repository"""
+        """Index the specified GitHub repository with better feedback"""
+        repo = st.session_state.github_repo
+        
         try:
-            with st.spinner(f"Indexing repository {st.session_state.github_repo}..."):
-                if not self.mcp_client:
-                    self.connect_mcp_server()
+            # Check connection first
+            if not self.mcp_client or not self.mcp_client.check_connection_health():
+                st.warning("MCP connection not healthy, reconnecting...")
+                self.connect_mcp_server()
                 
-                if self.mcp_client:
-                    logger.info(f"Using MCP client type: {type(self.mcp_client)}")
-                    logger.info(f"MCP client methods: {[m for m in dir(self.mcp_client) if not m.startswith('_')]}")
-                    result = self.mcp_client.index_repository(st.session_state.github_repo)
-                    st.success(f"Repository {st.session_state.github_repo} indexed successfully!")
-                    logger.info(f"Index result: {result}")
-                else:
-                    st.error("MCP client not connected")
+                if not self.mcp_client or not st.session_state.mcp_connected:
+                    st.error("Failed to establish MCP connection")
+                    return
+            
+            with st.spinner(f"Indexing repository {repo}... This may take a few minutes for large repositories."):
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                status_text.text("🔍 Starting repository indexing...")
+                progress_bar.progress(10)
+                
+                logger.info(f"Starting to index repository: {repo}")
+                result = self.mcp_client.index_repository(repo)
+                
+                progress_bar.progress(80)
+                status_text.text("✅ Processing indexing results...")
+                
+                # Store the result and mark as indexed
+                st.session_state.last_index_result = result
+                st.session_state.indexed_repos.add(repo)
+                
+                progress_bar.progress(100)
+                status_text.text("🎉 Indexing completed!")
+                
+                # Show success with details
+                st.success(f"✅ Repository '{repo}' indexed successfully!")
+                
+                # Show indexing statistics if available
+                if isinstance(result, dict):
+                    if 'indexed_files' in result:
+                        st.info(f"📁 Indexed {result['indexed_files']} files")
+                    if 'total_chunks' in result:
+                        st.info(f"🔍 Created {result['total_chunks']} searchable chunks")
+                    if 'status' in result:
+                        st.info(f"📊 Status: {result['status']}")
+                
+                logger.info(f"Successfully indexed repository: {repo}")
+                logger.info(f"Index result: {result}")
+                
         except Exception as e:
-            st.error(f"Failed to index repository: {str(e)}")
-            logger.error(f"Index error: {e}", exc_info=True)
+            error_msg = str(e)
+            st.error(f"❌ Failed to index repository: {error_msg}")
+            
+            # Provide specific guidance based on error
+            if "not connected" in error_msg.lower():
+                st.warning("🔌 MCP server connection lost. Please reconnect and try again.")
+            elif "timeout" in error_msg.lower():
+                st.warning("⏱️ Indexing timed out. Try with a smaller repository or check your connection.")
+            elif "github" in error_msg.lower() and "token" in error_msg.lower():
+                st.warning("🔑 GitHub token issue. Check your token permissions.")
+            elif "not found" in error_msg.lower():
+                st.warning("🔍 Repository not found. Check the repository name and your access permissions.")
+            
+            logger.error(f"Index error for {repo}: {e}", exc_info=True)
             
     def render_chat_interface(self):
         """Render the main chat interface"""
@@ -463,9 +549,34 @@ class OpenFluxApp:
                     model_id=st.session_state.selected_model
                 )
             
-            # Check if this is a repository search query
-            if any(keyword in prompt.lower() for keyword in ['search', 'find', 'look for', 'code', 'function', 'class']):
+            # Enhanced query detection for repository searches
+            search_keywords = [
+                'search', 'find', 'look for', 'show me', 'where is', 'how does',
+                'code', 'function', 'class', 'method', 'variable', 'file',
+                'implementation', 'algorithm', 'pattern', 'example',
+                'api', 'endpoint', 'route', 'handler', 'controller',
+                'test', 'spec', 'config', 'setup', 'init',
+                'error', 'exception', 'bug', 'issue',
+                'import', 'export', 'module', 'package',
+                'database', 'model', 'schema', 'query',
+                'authentication', 'auth', 'login', 'user',
+                'component', 'service', 'util', 'helper'
+            ]
+            
+            # Check if we have a repository and if this looks like a code search
+            has_repo = bool(st.session_state.github_repo)
+            is_search_query = any(keyword in prompt.lower() for keyword in search_keywords)
+            
+            if has_repo and is_search_query:
                 self.handle_repository_search(prompt)
+            elif has_repo and not is_search_query:
+                # Ask user if they want to search the repository
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"I can search the repository '{st.session_state.github_repo}' for information related to your question. Would you like me to search the codebase, or would you prefer a general response?"
+                })
+                # For now, default to general query, but user can rephrase to trigger search
+                self.handle_general_query(prompt)
             else:
                 self.handle_general_query(prompt)
                 
@@ -479,50 +590,106 @@ class OpenFluxApp:
         st.rerun()
         
     def handle_repository_search(self, query: str):
-        """Handle repository search queries"""
-        if not st.session_state.mcp_connected or not self.mcp_client:
+        """Handle repository search queries with better error handling"""
+        repo = st.session_state.github_repo
+        
+        # Check MCP connection
+        if not self.mcp_client or not self.mcp_client.check_connection_health():
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": "MCP server is not connected. Please connect to the server first."
+                "content": "🔌 MCP server is not connected or unhealthy. Please reconnect to the server first using the sidebar."
             })
             return
             
-        if not st.session_state.github_repo:
+        if not repo:
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": "Please specify a GitHub repository to search."
+                "content": "📁 Please specify a GitHub repository to search in the sidebar."
+            })
+            return
+        
+        # Check if repository is indexed
+        if repo not in st.session_state.indexed_repos:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"⚠️ Repository '{repo}' has not been indexed yet. Please index it first using the 'Index Repository' button in the sidebar."
             })
             return
             
         try:
-            with st.spinner("Searching repository..."):
+            with st.spinner("🔍 Searching repository..."):
                 # Perform semantic search using MCP
                 search_results = self.mcp_client.semantic_search(
-                    repository=st.session_state.github_repo,
-                    query=query
+                    repository=repo,
+                    query=query,
+                    max_results=15  # Get more results for better context
                 )
                 
-                # Add tool call message
+                # Add tool call message with better formatting
+                tool_content = f"Search Query: {query}\nRepository: {repo}\nResults: {json.dumps(search_results, indent=2)}"
                 st.session_state.messages.append({
                     "role": "tool",
                     "name": "semantic_search",
-                    "content": json.dumps(search_results, indent=2)
+                    "content": tool_content
                 })
                 
-                # Generate response using Bedrock
-                context = f"Repository: {st.session_state.github_repo}\nSearch Results: {json.dumps(search_results, indent=2)}"
-                response = self.bedrock_client.generate_response(query, context)
+                # Check if we got meaningful results
+                results = search_results.get('results', []) if isinstance(search_results, dict) else []
+                
+                if not results:
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"🔍 No results found for '{query}' in repository '{repo}'. Try rephrasing your search or using different keywords."
+                    })
+                    return
+                
+                # Generate response using Bedrock with better context
+                context = f"""Repository: {repo}
+Search Query: {query}
+Number of Results: {len(results)}
+
+Search Results:
+{json.dumps(search_results, indent=2)}
+
+Please analyze these search results and provide a helpful response about the code found."""
+                
+                response = self.bedrock_client.generate_response(
+                    f"Based on the search results, please help me understand: {query}", 
+                    context
+                )
                 
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response
                 })
                 
+                logger.info(f"Search completed for '{query}' in {repo}, found {len(results)} results")
+                
         except Exception as e:
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": f"Search failed: {str(e)}"
-            })
+            error_msg = str(e)
+            logger.error(f"Search error for '{query}' in {repo}: {e}", exc_info=True)
+            
+            # Provide specific error guidance
+            if "not indexed" in error_msg.lower():
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"📚 Repository '{repo}' needs to be indexed first. Please use the 'Index Repository' button in the sidebar."
+                })
+            elif "not connected" in error_msg.lower() or "unhealthy" in error_msg.lower():
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "🔌 MCP server connection lost. Please reconnect using the sidebar and try again."
+                })
+            elif "timeout" in error_msg.lower():
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "⏱️ Search timed out. Please try again with a more specific query."
+                })
+            else:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"❌ Search failed: {error_msg}\n\nPlease check your connection and try again."
+                })
             
     def handle_general_query(self, query: str):
         """Handle general queries using Bedrock"""
